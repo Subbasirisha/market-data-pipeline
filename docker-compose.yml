@@ -45,5 +45,61 @@ services:
       postgres:
         condition: service_healthy
 
+  # --- Airflow (start with: docker compose --profile airflow up -d) -------------------
+
+  # Airflow's own metadata database (DAG runs, task states, logs index). Kept separate
+  # from the warehouse: orchestration state and business data have different owners,
+  # backups and lifecycles.
+  airflow-db:
+    image: postgres:16
+    profiles: ["airflow"]
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # `airflow standalone` runs every Airflow component (API server + UI, scheduler,
+  # DAG processor, triggerer) in one container. Fine for local development; in
+  # production each component runs as its own service so they scale and fail separately.
+  airflow:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    profiles: ["airflow"]
+    command: standalone
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+      # Local only: skip the login screen. Never use this on a shared or public server.
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"
+      # Fixed secrets so every component signs/verifies tokens with the same key.
+      AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+      # Pipeline settings, as seen from inside the Compose network:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      RAW_DATA_DIR: /opt/airflow/data/raw
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-db:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  airflow-db-data:

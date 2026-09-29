@@ -19,7 +19,7 @@ incremental loads, and transforms it with **dbt**, orchestrated by **Airflow** a
 - [x] Phase 2: Extract from APIs (retries, rate limits, raw landing zone)
 - [x] Phase 3: Load into Postgres (upserts, incremental file manifest)
 - [x] Phase 4: Docker Compose (containerized pipeline + Postgres)
-- [ ] Phase 5: Airflow orchestration
+- [x] Phase 5: Airflow orchestration (hourly + daily DAGs, retries, backfills)
 - [ ] Phase 6: dbt models, data-quality tests, CI
 
 ## Quickstart
@@ -51,6 +51,26 @@ python -m market_pipeline.extract   # APIs -> data/raw/<source>/<entity>/dt=YYYY
 python -m market_pipeline.load      # new raw files -> Postgres (raw schema)
 ```
 
+**With Airflow** (scheduled):
+
+```bash
+docker compose --profile airflow up -d --build   # UI at http://localhost:8080
+```
+
+| DAG | Schedule | What it does |
+|---|---|---|
+| `crypto_prices_hourly` | every hour | fetches exactly that run's hour from CoinGecko (`[data_interval_start, data_interval_end)`), then loads |
+| `stock_prices_daily` | 22:00 UTC, Mon-Fri | fetches daily bars after the US close (fits Alpha Vantage's 25 requests/day), then loads |
+
+Each task retries twice, 5 minutes apart. The load task runs even if its extract failed
+partway (`trigger_rule="all_done"`), so whatever landed still reaches the database.
+Because each crypto run owns a fixed time window, past hours can be backfilled:
+
+```bash
+docker compose exec airflow airflow backfill create --dag-id crypto_prices_hourly \
+  --from-date 2026-09-26T10:00:00+00:00 --to-date 2026-09-26T12:59:00+00:00
+```
+
 Loads are **incremental** (a manifest table, `raw.loaded_files`, tracks which files are done)
 and **idempotent** (rows are upserted on their natural key, so reloading never duplicates).
 Each file loads in a single transaction together with its manifest entry.
@@ -71,5 +91,6 @@ tests/                 unit tests (pytest)
 data/raw/              raw API responses (git-ignored)
 .env.example           template for secrets/config; copy to .env
 Dockerfile             pipeline image (slim, non-root, layer-cached deps)
-docker-compose.yml     Postgres + one-shot pipeline job
+docker-compose.yml     Postgres, one-shot pipeline job, Airflow (profile)
+airflow/               Airflow image + DAGs
 ```

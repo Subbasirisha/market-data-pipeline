@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 import responses
 
@@ -17,6 +19,18 @@ def test_coingecko_returns_raw_record():
     assert record.source == "coingecko"
     assert record.entity == "bitcoin"
     assert record.payload == body
+
+
+@responses.activate
+def test_coingecko_range_requests_the_exact_window():
+    responses.get(f"{CG_URL}/range", json={"prices": []})
+    start = datetime(2026, 9, 29, 14, tzinfo=UTC)
+
+    record = coingecko.extract_range(build_session(), "bitcoin", start, start + timedelta(hours=1))
+
+    sent = responses.calls[0].request.params
+    assert (sent["from"], sent["to"]) == ("1790690400", "1790694000")
+    assert record.request_params["from"] == 1790690400  # window recorded for lineage
 
 
 @responses.activate

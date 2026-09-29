@@ -11,6 +11,7 @@ import logging
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from market_pipeline.config import Settings, load_settings
@@ -21,8 +22,9 @@ from market_pipeline.sources import alpha_vantage, coingecko
 log = logging.getLogger(__name__)
 
 # Minimum seconds between calls to each API (free tiers):
-#   Alpha Vantage allows ~1 request/second; CoinGecko's public API ~5-30 requests/minute.
-MIN_INTERVAL_SECONDS = {"coingecko": 2.0, "alpha_vantage": 1.5}
+#   Alpha Vantage documents ~1 request/second, but 1.5s gaps still tripped its burst limit
+#   in practice, so leave generous headroom. CoinGecko's public API allows ~5-30 requests/minute.
+MIN_INTERVAL_SECONDS = {"coingecko": 2.0, "alpha_vantage": 3.0}
 
 
 @dataclass
@@ -35,15 +37,44 @@ class ExtractSummary:
         return not self.failed
 
 
-def run_extract(settings: Settings) -> ExtractSummary:
-    session = build_session()
-    summary = ExtractSummary()
-    throttles = {source: Throttle(gap) for source, gap in MIN_INTERVAL_SECONDS.items()}
+# (source, entity, function that fetches one RawRecord)
+Job = tuple[str, str, Callable[[], RawRecord]]
 
-    jobs: list[tuple[str, str, Callable[[], RawRecord]]] = [
-        ("coingecko", coin, lambda c=coin: coingecko.extract(session, c))
-        for coin in settings.crypto_ids
-    ] + [
+
+def run_extract(settings: Settings) -> ExtractSummary:
+    """Latest data for every configured coin and stock (the CLI / Docker entrypoint)."""
+    session = build_session()
+    return _run_jobs(
+        settings,
+        [
+            ("coingecko", coin, lambda c=coin: coingecko.extract(session, c))
+            for coin in settings.crypto_ids
+        ]
+        + _stock_jobs(settings, session),
+    )
+
+
+def run_stock_extract(settings: Settings) -> ExtractSummary:
+    """Latest daily bars for every configured stock."""
+    return _run_jobs(settings, _stock_jobs(settings, build_session()))
+
+
+def run_crypto_interval_extract(
+    settings: Settings, start: datetime, end: datetime
+) -> ExtractSummary:
+    """Crypto prices for exactly [start, end): what a scheduled or backfilled run asks for."""
+    session = build_session()
+    return _run_jobs(
+        settings,
+        [
+            ("coingecko", coin, lambda c=coin: coingecko.extract_range(session, c, start, end))
+            for coin in settings.crypto_ids
+        ],
+    )
+
+
+def _stock_jobs(settings: Settings, session) -> list[Job]:
+    return [
         (
             "alpha_vantage",
             symbol,
@@ -51,6 +82,11 @@ def run_extract(settings: Settings) -> ExtractSummary:
         )
         for symbol in settings.stock_symbols
     ]
+
+
+def _run_jobs(settings: Settings, jobs: list[Job]) -> ExtractSummary:
+    summary = ExtractSummary()
+    throttles = {source: Throttle(gap) for source, gap in MIN_INTERVAL_SECONDS.items()}
 
     for source, entity, job in jobs:
         throttles[source].wait()

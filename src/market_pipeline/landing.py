@@ -5,7 +5,7 @@ Why keep raw data?
     saved files, with no need to call the API again (some APIs only serve recent data).
   - Debugging/auditing: you can always see exactly what the source sent.
 
-Files are partitioned Hive-style:  <root>/<source>/<entity>/dt=YYYY-MM-DD/<HHMMSS>.json
+Files are partitioned Hive-style:  <root>/<source>/<entity>/dt=YYYY-MM-DD/<HHMMSSffffff>.json
 The same layout is used by data lakes on S3, so tools like Spark or Athena can
 skip whole days of data when filtering by date ("partition pruning").
 """
@@ -46,7 +46,9 @@ def landing_path(root: Path, record: RawRecord) -> Path:
         / record.source
         / record.entity
         / f"dt={ts:%Y-%m-%d}"
-        / f"{ts:%H%M%S}.json"
+        # Microseconds: parallel runs (e.g. Airflow backfills) can land the same entity
+        # within one second, and must not overwrite each other's file.
+        / f"{ts:%H%M%S%f}.json"
     )
 
 
