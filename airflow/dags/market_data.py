@@ -3,6 +3,7 @@
 Two DAGs, because the two sources have very different budgets:
   crypto_prices_hourly   CoinGecko, every hour, fetching exactly that hour's window
   stock_prices_daily     Alpha Vantage (25 requests/day free), once per weekday after close
+Both run: extract >> load >> dbt build (transform + data-quality tests).
 
 DAG files should stay thin: they only wire tasks together. All real logic lives in
 the market_pipeline package, where it's unit-tested and also runnable without Airflow.
@@ -42,6 +43,18 @@ def load_raw_files() -> int:
     return summary.rows_upserted
 
 
+@task.bash(pool="dbt")
+def dbt_build() -> str:
+    # `dbt build` runs every model and its tests in dependency order; a failing test fails
+    # this task, so bad data is flagged instead of silently reaching the marts.
+    # pool="dbt" (1 slot) makes runs from both DAGs take turns, so two builds never
+    # rewrite the same incremental table at the same time.
+    return (
+        "cd /opt/airflow/dbt && /opt/dbt-venv/bin/dbt build --profiles-dir . "
+        "--target-path /tmp/dbt/target --log-path /tmp/dbt/logs"
+    )
+
+
 @dag(
     dag_id="crypto_prices_hourly",
     # Airflow 3 gotcha: schedule="@hourly" alone gives each run a zero-length interval
@@ -74,7 +87,7 @@ def crypto_prices_hourly():
 
     # trigger_rule="all_done": load whatever landed, even if the extract task failed
     # partway (same design as pipeline.py). The run is still marked failed.
-    extract_crypto() >> load_raw_files.override(trigger_rule="all_done")()
+    extract_crypto() >> load_raw_files.override(trigger_rule="all_done")() >> dbt_build()
 
 
 @dag(
@@ -97,7 +110,7 @@ def stock_prices_daily():
         _raise_if_failed("extract", summary.failed)
         return len(summary.written)
 
-    extract_stocks() >> load_raw_files.override(trigger_rule="all_done")()
+    extract_stocks() >> load_raw_files.override(trigger_rule="all_done")() >> dbt_build()
 
 
 crypto_prices_hourly()

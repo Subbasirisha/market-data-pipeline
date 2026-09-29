@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: fct_crypto_prices_hourly
+    description: Hourly open/high/low/close per coin. One row per coin per hour.
+    columns:
+      - name: coin_id
+        data_tests: [not_null]
+      - name: hour_ts
+        data_tests: [not_null]
+      - name: open_usd
+        data_tests: [positive]
+      - name: close_usd
+        data_tests: [positive]
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [coin_id, hour_ts]
+
+  - name: fct_stock_returns_daily
+    description: Daily close, return and 7/20-day moving averages per stock.
+    columns:
+      - name: close_usd
+        data_tests: [not_null, positive]
+      - name: daily_return
+        data_tests:
+          # A single-day move over 50% is almost certainly bad data (or a stock split).
+          # severity: warn, because it deserves a look but shouldn't block the pipeline.
+          - within_range:
+              arguments:
+                min_value: -0.5
+                max_value: 0.5
+              config:
+                severity: warn
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [symbol, trade_date]
+
+unit_tests:
+  # dbt unit tests check the *logic* of a model on tiny hand-written inputs,
+  # without depending on whatever data happens to be in the database.
+  - name: daily_return_and_moving_average_warm_up
+    model: fct_stock_returns_daily
+    given:
+      - input: ref('stg_stock_prices_daily')
+        rows:
+          - {symbol: TEST, trade_date: "2026-09-01", close_usd: 100, volume: 1}
+          - {symbol: TEST, trade_date: "2026-09-02", close_usd: 110, volume: 1}
+          - {symbol: TEST, trade_date: "2026-09-03", close_usd: 99,  volume: 1}
+    expect:
+      rows:
+        - {trade_date: "2026-09-01", daily_return: null, ma_7_usd: null}
+        - {trade_date: "2026-09-02", daily_return: "0.100000", ma_7_usd: null}
+        - {trade_date: "2026-09-03", daily_return: "-0.100000", ma_7_usd: null}

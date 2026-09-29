@@ -20,14 +20,14 @@ incremental loads, and transforms it with **dbt**, orchestrated by **Airflow** a
 - [x] Phase 3: Load into Postgres (upserts, incremental file manifest)
 - [x] Phase 4: Docker Compose (containerized pipeline + Postgres)
 - [x] Phase 5: Airflow orchestration (hourly + daily DAGs, retries, backfills)
-- [ ] Phase 6: dbt models, data-quality tests, CI
+- [x] Phase 6: dbt models, data-quality tests, CI
 
 ## Quickstart
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,dbt]"
 cp .env.example .env      # then add your API key
 docker compose up -d --wait   # start Postgres
 pytest                        # unit + integration tests
@@ -81,6 +81,35 @@ Each file loads in a single transaction together with its manifest entry.
 | `raw.stock_prices_daily` | one stock, one trading day | `(symbol, trade_date)` |
 | `raw.loaded_files` | one loaded raw file | `file_path` |
 
+## Transformations (dbt)
+
+```
+raw.crypto_prices ──► staging.stg_crypto_prices ──► marts.fct_crypto_prices_hourly   (incremental)
+raw.stock_prices_daily ──► staging.stg_stock_prices_daily ──► marts.fct_stock_returns_daily
+```
+
+| Model | What it is |
+|---|---|
+| `fct_crypto_prices_hourly` | Hourly open/high/low/close per coin. **Incremental**: only hours with newly *loaded* rows are rebuilt, so backfilled history is picked up too (verified to match a full refresh). |
+| `fct_stock_returns_daily` | Daily return plus 7- and 20-trading-day moving averages per stock. |
+
+Data-quality checks run on every build: not-null, positive prices, uniqueness of natural
+keys (sources and marts), a warn-level sanity range on daily returns, a dbt **unit test**
+for the return/moving-average logic, and source **freshness** thresholds:
+
+```bash
+cd dbt && dbt build --profiles-dir .          # models + tests
+cd dbt && dbt source freshness --profiles-dir .
+```
+
+In Airflow, both DAGs end with a `dbt_build` task (single-slot pool, so builds never overlap).
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push:
+lint → pytest (incl. Postgres integration tests) → load synthetic fixtures (`ci/`) →
+`dbt build`, plus a separate job that builds the Airflow image and fails on DAG import errors.
+
 ## Project layout
 
 ```
@@ -93,4 +122,7 @@ data/raw/              raw API responses (git-ignored)
 Dockerfile             pipeline image (slim, non-root, layer-cached deps)
 docker-compose.yml     Postgres, one-shot pipeline job, Airflow (profile)
 airflow/               Airflow image + DAGs
+dbt/                   dbt project: staging + marts models, tests
+ci/                    fixture generator + synthetic raw files for CI
+.github/workflows/     CI pipeline
 ```

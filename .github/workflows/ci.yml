@@ -1,0 +1,81 @@
+# Runs on every push and pull request. A red X on GitHub means something below failed.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Lint, tests, dbt build
+    runs-on: ubuntu-latest
+
+    # A throwaway Postgres just for this job, same version as docker-compose.yml.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: market
+          POSTGRES_USER: pipeline
+          POSTGRES_PASSWORD: ci_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pipeline -d market"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: market
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: ci_password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev,dbt]"
+
+      - name: Lint
+        run: ruff check .
+
+      # Integration tests run too, because the Postgres service is available.
+      - name: Python tests
+        run: pytest -v
+
+      # Load synthetic fixture files with the real loader, then build and test every
+      # dbt model on top of them: the whole raw -> staging -> marts path, end to end.
+      - name: Load fixture data
+        env:
+          RAW_DATA_DIR: ci/fixtures/raw
+        run: python -m market_pipeline.load
+
+      - name: dbt build (models + data tests + unit tests)
+        working-directory: dbt
+        run: dbt build --profiles-dir .
+
+  airflow-dags:
+    name: Airflow DAGs parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Airflow image
+        run: docker build -f airflow/Dockerfile -t market-airflow .
+
+      # Catches syntax errors, bad imports and broken DAG definitions before deploy.
+      - name: Check for DAG import errors
+        run: |
+          docker run --rm -v "$PWD/airflow/dags:/opt/airflow/dags:ro" \
+            -e AIRFLOW__CORE__LOAD_EXAMPLES=False --entrypoint python market-airflow -c "
+          from airflow.dag_processing.dagbag import DagBag
+          bag = DagBag('/opt/airflow/dags')
+          assert not bag.import_errors, bag.import_errors
+          assert set(bag.dag_ids) == {'crypto_prices_hourly', 'stock_prices_daily'}, bag.dag_ids
+          print('OK:', sorted(bag.dag_ids))
+          "

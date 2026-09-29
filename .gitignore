@@ -16,3 +16,9 @@ data/raw/*
 .DS_Store
 .vscode/
 .idea/
+
+# dbt build output
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/.user.yml

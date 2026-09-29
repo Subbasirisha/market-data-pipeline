@@ -1,0 +1,14 @@
+# Connection settings, read from the same environment variables as the Python pipeline,
+# so no credentials live in this file. Run dbt with:  dbt build --profiles-dir .
+market:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'market') }}"
+      user: "{{ env_var('POSTGRES_USER', 'pipeline') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD') }}"
+      schema: analytics
+      threads: 4

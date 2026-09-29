@@ -73,7 +73,11 @@ services:
       context: .
       dockerfile: airflow/Dockerfile
     profiles: ["airflow"]
-    command: standalone
+    # Create the single-slot "dbt" pool (see dbt_build in the DAG), then start Airflow.
+    command:
+      - bash
+      - -c
+      - airflow db migrate && airflow pools set dbt 1 "one dbt build at a time" && exec airflow standalone
     env_file: .env
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -93,6 +97,7 @@ services:
       - "8080:8080"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./dbt:/opt/airflow/dbt
       - ./data:/opt/airflow/data
     depends_on:
       postgres:
