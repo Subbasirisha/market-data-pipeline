@@ -14,11 +14,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from market_pipeline.config import Settings, load_settings
-from market_pipeline.http import build_session
+from market_pipeline.http import Throttle, build_session
 from market_pipeline.landing import RawRecord, write_raw
 from market_pipeline.sources import alpha_vantage, coingecko
 
 log = logging.getLogger(__name__)
+
+# Minimum seconds between calls to each API (free tiers):
+#   Alpha Vantage allows ~1 request/second; CoinGecko's public API ~5-30 requests/minute.
+MIN_INTERVAL_SECONDS = {"coingecko": 2.0, "alpha_vantage": 1.5}
 
 
 @dataclass
@@ -34,6 +38,7 @@ class ExtractSummary:
 def run_extract(settings: Settings) -> ExtractSummary:
     session = build_session()
     summary = ExtractSummary()
+    throttles = {source: Throttle(gap) for source, gap in MIN_INTERVAL_SECONDS.items()}
 
     jobs: list[tuple[str, str, Callable[[], RawRecord]]] = [
         ("coingecko", coin, lambda c=coin: coingecko.extract(session, c))
@@ -48,6 +53,7 @@ def run_extract(settings: Settings) -> ExtractSummary:
     ]
 
     for source, entity, job in jobs:
+        throttles[source].wait()
         try:
             path = write_raw(settings.raw_data_dir, job())
         except Exception as exc:  # noqa: BLE001 - record and continue with the next entity
