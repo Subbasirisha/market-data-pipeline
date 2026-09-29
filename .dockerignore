@@ -1,0 +1,12 @@
+# Keep the build context small and secrets out of the image.
+# Anything not listed here is sent to Docker when building.
+.env
+.venv/
+.git/
+data/
+**/__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+tests/

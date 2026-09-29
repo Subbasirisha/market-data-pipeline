@@ -1,7 +1,8 @@
 # Local infrastructure for the pipeline.
-#   Start:  docker compose up -d
-#   Stop:   docker compose down        (data is kept in the pgdata volume)
-#   Reset:  docker compose down -v     (also deletes the database volume)
+#   Start DB:      docker compose up -d
+#   Run pipeline:  docker compose run --rm pipeline
+#   Stop:          docker compose down        (data is kept in the pgdata volume)
+#   Reset:         docker compose down -v     (also deletes the database volume)
 # Values like ${POSTGRES_USER} are read from .env automatically.
 
 services:
@@ -22,6 +23,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # The pipeline is a one-shot job, not a long-running server: it runs, then exits.
+  # The "jobs" profile keeps `docker compose up` from starting it; run it explicitly with
+  #   docker compose run --rm pipeline
+  pipeline:
+    build: .
+    profiles: ["jobs"]
+    env_file: .env
+    environment:
+      # Inside the Compose network, containers reach each other by *service name*.
+      # "localhost" here would mean the pipeline container itself, not Postgres.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      RAW_DATA_DIR: /data/raw
+    volumes:
+      # Bind mount: the container writes raw files into ./data on your Mac, so the
+      # landing zone is shared between local runs and container runs.
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:

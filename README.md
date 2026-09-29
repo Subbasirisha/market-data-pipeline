@@ -18,7 +18,7 @@ incremental loads, and transforms it with **dbt**, orchestrated by **Airflow** a
 - [x] Phase 1: Project setup (config, tests, secrets handling)
 - [x] Phase 2: Extract from APIs (retries, rate limits, raw landing zone)
 - [x] Phase 3: Load into Postgres (upserts, incremental file manifest)
-- [ ] Phase 4: Docker Compose
+- [x] Phase 4: Docker Compose (containerized pipeline + Postgres)
 - [ ] Phase 5: Airflow orchestration
 - [ ] Phase 6: dbt models, data-quality tests, CI
 
@@ -35,7 +35,18 @@ pytest                        # unit + integration tests
 
 ## Running the pipeline
 
+**In Docker** (only Docker needed; no local Python):
+
 ```bash
+cp .env.example .env
+docker compose up -d --wait          # Postgres
+docker compose run --rm pipeline     # extract + load, then exit
+```
+
+**Locally** (for development):
+
+```bash
+python -m market_pipeline.pipeline  # extract + load
 python -m market_pipeline.extract   # APIs -> data/raw/<source>/<entity>/dt=YYYY-MM-DD/*.json
 python -m market_pipeline.load      # new raw files -> Postgres (raw schema)
 ```
@@ -59,5 +70,6 @@ src/market_pipeline/   pipeline code (importable Python package)
 tests/                 unit tests (pytest)
 data/raw/              raw API responses (git-ignored)
 .env.example           template for secrets/config; copy to .env
-docker-compose.yml     local Postgres
+Dockerfile             pipeline image (slim, non-root, layer-cached deps)
+docker-compose.yml     Postgres + one-shot pipeline job
 ```
