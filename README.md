@@ -1,5 +1,7 @@
 # Market Data Pipeline
 
+[![CI](https://github.com/Subbasirisha/market-data-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Subbasirisha/market-data-pipeline/actions/workflows/ci.yml)
+
 An end-to-end data ingestion pipeline that pulls **crypto** (CoinGecko) and **stock**
 (Alpha Vantage) prices, lands raw data, loads it into **PostgreSQL** with idempotent
 incremental loads, and transforms it with **dbt**, orchestrated by **Airflow** and run in **Docker**.
